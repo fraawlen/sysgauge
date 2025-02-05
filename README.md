@@ -43,7 +43,7 @@ By default, the window is created at the top-left of your screen with coordinate
 -x <long>     : custom x coordinate
 -y <long>     : custom y coordinate
 ```
-Appearance can be modified through [Cassete's theming options](https://github.com/fraawlen/cassette/blob/trunk/docs/cgui-theming.md). The Cells (widgets) used in SysGauges are `gauge`, `label` and `beacon`. Check out [Cassete's themes](https://github.com/fraawlen/cassette/tree/trunk/cgui/themes) for practical examples.
+Appearance can be modified through [Cassette's theming options](https://github.com/fraawlen/cassette/blob/trunk/docs/cgui-theming.md). The Cells (widgets) used in SysGauges are `gauge`, `label` and `beacon`. Check out [Cassette's themes](https://github.com/fraawlen/cassette/tree/trunk/cgui/themes) for practical examples.
 
 Credits
 -------
@@ -53,5 +53,5 @@ Credits
 Mirrors
 -------
 
-- https://github.com/fraawlen/sysgauges
-- https://codeberg.org/fraawlen/sysgauges
+- ![Github](https://github.com/fraawlen/sysgauges)
+- ![Codeberg](https://codeberg.org/fraawlen/sysgauges)
