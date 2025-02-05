@@ -18,7 +18,7 @@ LIST_INC := $(wildcard $(DIR_SRC)/*.h)
 LIST_OBJ := $(patsubst $(DIR_SRC)/%.c, $(DIR_OBJ)/%.o, $(LIST_SRC))
 
 OUTPUT := sysgauges
-LIBS   := -ldg -ldg-base -pthread
+LIBS   := -lcgui -lcobj -pthread
 FLAGS  := -std=c11 -O3 -D_POSIX_C_SOURCE=200809L -pedantic -pedantic-errors -Werror -Wall -Wextra          \
           -Wbad-function-cast -Wcast-align -Wcast-qual -Wdeclaration-after-statement -Wfloat-equal         \
           -Wformat=2 -Wlogical-op -Wmissing-declarations -Wmissing-include-dirs -Wmissing-prototypes       \

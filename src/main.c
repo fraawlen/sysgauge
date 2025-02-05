@@ -18,10 +18,8 @@
 /************************************************************************************************************/
 /************************************************************************************************************/
 
-#include <dg/core/core.h>
-#include <dg/base/base.h>
-#include <dg/base/origin.h>
-#include <dg/base/string.h>
+#include <cassette/cgui.h>
+#include <cassette/cobj.h>
 #include <float.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -36,7 +34,7 @@
 /************************************************************************************************************/
 
 #define PROGRAM "sysgauges"
-#define VERSION "v.1.0.0"
+#define VERSION "v.2.0.0"
 #define GB      * data.mem_unit / 1073741824.0
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
@@ -47,9 +45,9 @@ struct row
 	const char *unit;
 	const int precision;
 	const bool custom_max;
-	dg_core_cell_t *label;
-	dg_core_cell_t *gauge;
-	dg_core_cell_t *max;
+	cgui_cell *label;
+	cgui_cell *gauge;
+	cgui_cell *max;
 };
 
 /************************************************************************************************************/
@@ -57,13 +55,15 @@ struct row
 /************************************************************************************************************/
 
 static void  help        (void);
+static void  on_exit     (void);
+static void  on_run      (void);
 static void  options     (int, char**);
 static void  resize      (void);
 static void  row_destroy (struct row *);
 static void  row_setup   (struct row *, double);
 static void  row_update  (struct row *, double, double);
 static void *thread      (void *);
-static void  update_all  (uint32_t);
+static void  update_all  (void);
 
 /************************************************************************************************************/
 /************************************************************************************************************/
@@ -71,24 +71,27 @@ static void  update_all  (uint32_t);
 
 /* - User parameters - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
 
-static bool         show_max = false;
-static bool         verbose  = false;
-static double       alert    = 0.95;
-static unsigned int delay    = 1;
-static int16_t      width    = 0;
-static int16_t      x        = 20;
-static int16_t      y        = 20;
+static bool          show_max = false;
+static bool          verbose  = false;
+static double        alert    = 0.95;
+static unsigned int  delay    = 1;
+static unsigned long width    = 0;
+static unsigned long height   = 0;
+static long          x        = 20;
+static long          y        = 20;
 
 /* GUI components  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
 
-static dg_core_window_t *window = NULL;
-static dg_core_grid_t   *grid   = NULL;
+static cgui_window *window = CGUI_WINDOW_PLACEHOLDER;
+static cgui_grid   *grid   = CGUI_GRID_PLACEHOLDER;
+static cstr        *str    = CSTR_PLACEHOLDER;
 
-static struct row cpu = { "CPU", "%",  2, false, NULL, NULL, NULL };
-static struct row mem = { "MEM", "GB", 1, true,  NULL, NULL, NULL };
-static struct row swp = { "SWP", "GB", 1, true,  NULL, NULL, NULL };
+static struct row cpu = { "CPU", "%",  1, false, CGUI_CELL_PLACEHOLDER, CGUI_CELL_PLACEHOLDER, CGUI_CELL_PLACEHOLDER };
+static struct row mem = { "MEM", "GB", 1, true,  CGUI_CELL_PLACEHOLDER, CGUI_CELL_PLACEHOLDER, CGUI_CELL_PLACEHOLDER };
+static struct row swp = { "SWP", "GB", 1, true,  CGUI_CELL_PLACEHOLDER, CGUI_CELL_PLACEHOLDER, CGUI_CELL_PLACEHOLDER };
 
-static int16_t pos = 0;
+static size_t pos = 0;
+static pthread_t t;
 
 /************************************************************************************************************/
 /* MAIN *****************************************************************************************************/
@@ -98,25 +101,27 @@ int
 main(int argc, char **argv)
 {
 	struct sysinfo data;
-	pthread_t t;
 
 	/* Setup */
 
-	dg_core_init(argc, argv, NULL, NULL, NULL);
-	dg_base_init();
-	sysinfo(&data);
+	cgui_init(argc, argv);
 	options(argc, argv);
-	pthread_create(&t, NULL, thread, NULL);
+	sysinfo(&data);
 
-	window = dg_core_window_create(DG_CORE_WINDOW_FIXED);
-	grid   = dg_core_grid_create(3, data.totalswap > 0 ? 3 : 2);
+	window = cgui_window_create();
+	grid   = cgui_grid_create(3, data.totalswap > 0 ? 3 : 2);
+	str    = cstr_create();
 
 	/* Grid configuration */
 
-	dg_core_grid_set_column_growth(grid, 1, 1.0);
-	dg_core_grid_set_column_width(grid, 0, 3);
-	dg_core_grid_set_column_width(grid, 1, 32);
-	dg_core_grid_set_column_width(grid, 2, 6);
+	cgui_grid_set_row_flex(grid, 0, 1.0);
+	cgui_grid_set_row_flex(grid, 1, 1.0);
+	cgui_grid_set_row_flex(grid, 2, 1.0);
+	cgui_grid_set_col_flex(grid, 1, 1.0);
+
+	cgui_grid_resize_col(grid, 0, 3);
+	cgui_grid_resize_col(grid, 1, 6);
+	cgui_grid_resize_col(grid, 2, 6);
 
 	/* Rows configuration */
 
@@ -126,32 +131,30 @@ main(int argc, char **argv)
 
 	/* Window configuration */
 
+	cgui_window_push_grid(window, grid);
 	resize();
 
-	dg_core_window_push_grid(window, grid);
-	dg_core_window_rename(window, "sysmeter", NULL);
-	dg_core_window_activate(window);
-	dg_core_window_set_fixed_position(window, x, y);
+	cgui_window_rename(window, "sysmeter");
+	cgui_window_set_type(window, CGUI_WINDOW_UNDERLAY);
+	cgui_window_activate(window);
 
 	/* Run */
 
-	dg_core_resource_set_callback(resize);
-	dg_core_loop_set_callback_signal(update_all);
-	dg_core_loop_run();
+	cgui_on_run(on_run);
+	cgui_on_exit(on_exit);
+	cgui_run();
 
 	/* Cleanup & end */
 
-	dg_core_window_destroy(window);
-	dg_core_grid_destroy(grid);
+	cgui_window_destroy(window);
+	cgui_grid_destroy(grid);
+	cstr_destroy(str);
 
 	row_destroy(&cpu);
 	row_destroy(&mem);
 	row_destroy(&swp);
 
-	dg_base_reset();
-	dg_core_reset();
-
-	pthread_join(t, NULL);
+	cgui_reset();
 
 	return 0;
 }
@@ -168,12 +171,28 @@ help(void)
 		"usage: " PROGRAM " [option] <value>\n"
 		"\t-a <0.0..1.0> : alert threshold\n"
 		"\t-h            : print this help\n"
+		"\t-H <ulong>    : custom height\n"
 		"\t-i <uint>     : update interval in seconds\n"
 		"\t-m            : show max MEM and SWP values\n"
 		"\t-v            : print extra information (window width and height)\n"
-		"\t-w <uint16_t> : custom width\n"
-		"\t-x <int16_t>  : custom x coordinate\n"
-		"\t-y <int16_t>  : custom y coordinate\n");
+		"\t-w <ulong>    : custom width\n"
+		"\t-x <long>     : custom x coordinate\n"
+		"\t-y <long>     : custom y coordinate\n");
+}
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+
+static void
+on_exit(void)
+{
+	pthread_join(t, NULL);
+}
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+
+static void
+on_run(void)
+{
+	pthread_create(&t, NULL, thread, NULL);
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
@@ -183,7 +202,7 @@ options(int argc, char **argv)
 {
 	int opt;
 
-	while ((opt = getopt(argc, argv, "a:hi:mvw:x:y:")) != -1)
+	while ((opt = getopt(argc, argv, "a:hH:i:mvw:x:y:")) != -1)
 	{
 		switch (opt)
 		{
@@ -194,6 +213,10 @@ options(int argc, char **argv)
 			case 'h':
 				help();
 				exit(0);
+
+			case 'H':
+				height = strtoul(optarg, NULL, 0);
+				break;
 
 			case 'i':
 				delay = strtoul(optarg, NULL, 0);
@@ -232,16 +255,14 @@ options(int argc, char **argv)
 static void
 resize(void)
 {
-	int16_t w = dg_core_grid_get_min_pixel_width(grid);
-	int16_t h = dg_core_grid_get_min_pixel_height(grid);
-
-	dg_core_window_set_fixed_size(window, width > w ? width : w, h);
+	cgui_window_resize(window, width, height);
+	cgui_window_move_smart(window, x, y, x, y);
 
 	if (verbose)
 	{
 		printf("window size updated\n");
-		printf("width  = %i\n", w);
-		printf("height = %i\n", h);
+		printf("width  = %.0f\n", cgui_window_width(window));
+		printf("height = %.0f\n", cgui_window_height(window));
 	}
 }
 
@@ -250,9 +271,9 @@ resize(void)
 static void
 row_destroy(struct row *r)
 {
-	dg_core_cell_destroy(r->label);
-	dg_core_cell_destroy(r->gauge);
-	dg_core_cell_destroy(r->max);
+	cgui_cell_destroy(r->label);
+	cgui_cell_destroy(r->gauge);
+	cgui_cell_destroy(r->max);
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
@@ -260,36 +281,35 @@ row_destroy(struct row *r)
 static void
 row_setup(struct row *r, double max)
 {
-	dg_base_string_t tmp;
-
-	r->label = dg_base_indicator_create();
-	r->gauge = dg_base_gauge_create();
-	r->max   = dg_base_label_create();
+	r->label = cgui_beacon_create();
+	r->gauge = cgui_gauge_create();
+	r->max   = cgui_label_create();
 
 	if (max <= DBL_EPSILON)
 	{
 		return;
 	}
 
-	tmp = dg_base_string_convert_double(max, r->precision);
+	cstr_clear(str);
+	cstr_set_precision(str, r->precision);
+	cstr_append(str, max);
+	cstr_append(str, r->unit);
 
-	dg_base_string_append(&tmp, r->unit);
-	dg_base_gauge_set_label_style(r->gauge, r->precision, r->unit);
-	dg_base_gauge_set_limits(r->gauge, 0.0, max);
-	dg_base_indicator_set_label(r->label, r->name);
-	dg_base_label_set_label(r->max, tmp.chars);
-	dg_base_label_set_origin(r->max, DG_BASE_ORIGIN_RIGHT);
-	dg_base_string_clear(&tmp);
+	cgui_gauge_set_precision(r->gauge, r->precision);
+	cgui_gauge_set_units(r->gauge, r->unit);
+	cgui_gauge_clamp_value(r->gauge, 0.0, max);
+	cgui_label_set(r->max, cstr_chars(str));
+	cgui_beacon_set_label(r->label, r->name);
 
-	dg_core_grid_assign_cell(grid, r->label, 0, pos, 1, 1);
+	cgui_grid_assign_cell(grid, r->label, 0, pos, 1, 1);
 	if (show_max && r->custom_max)
 	{
-		dg_core_grid_assign_cell(grid, r->gauge, 1, pos, 1, 1);
-		dg_core_grid_assign_cell(grid, r->max,   2, pos, 1, 1);
+		cgui_grid_assign_cell(grid, r->gauge, 1, pos, 1, 1);
+		cgui_grid_assign_cell(grid, r->max,   2, pos, 1, 1);
 	}
 	else
 	{
-		dg_core_grid_assign_cell(grid, r->gauge, 1, pos, 2, 1);
+		cgui_grid_assign_cell(grid, r->gauge, 1, pos, 2, 1);
 	}
 
 	pos++;
@@ -300,16 +320,8 @@ row_setup(struct row *r, double max)
 static void
 row_update(struct row *r, double val, double high)
 {
-	dg_base_gauge_set_value(r->gauge, val);
-
-	if (val >= high)
-	{
-		dg_base_indicator_set_on(r->label);
-	}
-	else
-	{
-		dg_base_indicator_set_off(r->label);
-	}
+	cgui_gauge_set_value(r->gauge, val);
+	cgui_beacon_set_state(r->label, val >= high ? CGUI_BEACON_ON : CGUI_BEACON_OFF);
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
@@ -319,9 +331,11 @@ thread(void *params)
 {
 	(void)params;
 
-	while (dg_core_is_init())
+	while (cgui_is_running())
 	{
-		dg_core_loop_send_signal(0);
+		cgui_lock();
+		update_all();
+		cgui_unlock();
 		sleep(delay);
 	}
 
@@ -331,11 +345,9 @@ thread(void *params)
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
 
 static void
-update_all(uint32_t serial)
+update_all(void)
 {
 	struct sysinfo data;
-
-	(void)serial;
 
 	sysinfo(&data);
 
