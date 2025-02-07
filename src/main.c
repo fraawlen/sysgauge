@@ -329,12 +329,15 @@ row_update(struct row *r, double val, double high)
 static void *
 thread(void *params)
 {
+	bool run = true;
+
 	(void)params;
 
-	while (cgui_is_running())
+	while (run)
 	{
 		cgui_lock();
 		update_all();
+		run = cgui_is_running();
 		cgui_unlock();
 		sleep(delay);
 	}
